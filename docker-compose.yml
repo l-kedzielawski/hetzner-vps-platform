@@ -1,0 +1,173 @@
+name: vps-infrastructure
+
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    restart: unless-stopped
+
+    # Traefik is the only container exposing host ports.
+    # Everything public comes through this edge proxy.
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Read-only access is enough for Docker service discovery.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # ACME state is persisted so certificates survive restarts.
+      - ./traefik/letsencrypt:/letsencrypt
+
+      # Static and dynamic config are split for readability.
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+
+    networks:
+      # Shared public edge network used by multiple Compose projects.
+      - traefik-public
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: n8n-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      # Database stays on the private application network only.
+      - internal
+
+  n8n:
+    # Pinned to a specific version so the public case study does not rely on a moving tag.
+    image: n8nio/n8n:1.100.1
+    container_name: n8n-app
+    restart: unless-stopped
+
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://${N8N_HOST}/
+      WEBHOOK_URL: https://${N8N_HOST}/
+
+      NODE_ENV: production
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${GENERIC_TIMEZONE}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_SECURE_COOKIE: "true"
+      NODES_EXCLUDE: "[]"
+
+      # Recommended when n8n runs behind a reverse proxy.
+      # The live logs show forwarded-header warnings without this trust setting.
+      N8N_PROXY_HOPS: 1
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    volumes:
+      # Persistent workflow data, credentials, and execution metadata.
+      - n8n_data:/home/node/.n8n
+
+      # Source mount kept here for the public template.
+      # The live host builds from a pinned image instead.
+      - ./data/offers:/data/offers
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.http.routers.n8n.rule=Host(`${N8N_HOST}`)
+      - traefik.http.routers.n8n.entrypoints=websecure
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.n8n.middlewares=security-headers@file
+      - traefik.http.services.n8n.loadbalancer.server.port=5678
+
+    networks:
+      # Internal traffic to Postgres and helper services.
+      - internal
+
+      # Public edge access via Traefik only.
+      - traefik-public
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: n8n-gotenberg
+    restart: unless-stopped
+
+    networks:
+      # Internal-only PDF/rendering helper for workflow-related document generation.
+      - internal
+
+  offers-app:
+    build:
+      # The live stack builds this from a local project directory.
+      # This template keeps the same behavior but uses a repo-relative path.
+      context: ./apps/offers
+    container_name: offers-app
+    restart: unless-stopped
+
+    environment:
+      OFFERS_PROJECT_ROOT: /app
+      OFFERS_OUTPUT_DIR: /app/output
+      GOTENBERG_URL: http://gotenberg:3000
+      OFFERS_FORM_USERNAME: ${OFFERS_FORM_USERNAME}
+      OFFERS_FORM_PASSWORD: ${OFFERS_FORM_PASSWORD}
+      OFFERS_RENDER_TOKEN: ${OFFERS_RENDER_TOKEN}
+      N8N_OFFERS_WEBHOOK_URL: ${N8N_OFFERS_WEBHOOK_URL}
+
+    depends_on:
+      - gotenberg
+
+    volumes:
+      - ./apps/offers:/app
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.http.routers.offers.rule=Host(`${OFFERS_HOST}`)
+      - traefik.http.routers.offers.entrypoints=websecure
+      - traefik.http.routers.offers.tls=true
+      - traefik.http.routers.offers.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.routers.offers.middlewares=security-headers@file
+      - traefik.http.services.offers.loadbalancer.server.port=8000
+
+    networks:
+      # Internal access to Gotenberg and any private workflow helper traffic.
+      - internal
+
+      # Public because it intentionally serves an external hostname.
+      - traefik-public
+
+networks:
+  internal:
+    driver: bridge
+    # Stack-local east/west traffic only.
+
+  traefik-public:
+    external: true
+    # Shared edge network used by all public services on the VPS.
+
+volumes:
+  postgres_data:
+  n8n_data:

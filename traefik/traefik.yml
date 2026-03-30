@@ -1,0 +1,44 @@
+# Static Traefik configuration.
+# The live host currently uses equivalent CLI flags; this file form is easier to review.
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      # Force plain HTTP traffic onto the HTTPS entrypoint.
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    # Discover routers and services from container labels.
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    ## Services must opt in with traefik.enable=true to be routed.
+    network: traefik-public
+
+  file:
+    # File provider is used for reusable middlewares.
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+    # Dynamic config reloads without a Traefik restart.
+certificatesResolvers:
+  myresolver:
+    acme:
+      # Registration email used by Let's Encrypt.
+      email: ${TRAEFIK_ACME_EMAIL}
+
+      # Persistent ACME state and issued certificate metadata.
+      storage: /letsencrypt/acme.json
+
+      # This matches the verified live setup.
+      # Cloudflare is used for DNS/routing, but certificate issuance is currently TLS challenge.
+      tlsChallenge: {}
+
+log:
+  level: INFO

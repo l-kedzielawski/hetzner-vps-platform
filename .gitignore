@@ -1,0 +1,15 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# ACME and certificate storage
+traefik/letsencrypt/
+traefik/letsencrypt/acme.json
+
+# Common local OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

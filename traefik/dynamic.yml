@@ -1,0 +1,21 @@
+http:
+  middlewares:
+    redirect-to-https:
+      # Kept as a reusable middleware, even though the main redirect is handled statically.
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    security-headers:
+      # Small baseline of headers that make sense for public apps behind the proxy.
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: camera=(), microphone=(), geolocation=()
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        customRequestHeaders:
+          X-Forwarded-Proto: https
