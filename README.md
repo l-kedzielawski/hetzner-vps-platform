@@ -249,4 +249,5 @@ The included Compose file is a representative slice of the platform, not a compl
 
 ## Contact
 
-lukasz@kedzielawski.com
+Lukasz Kedzielawski
+l.kedzielawski@gmail.com
